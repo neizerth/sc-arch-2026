@@ -1,0 +1,24 @@
+{
+  "name": "sc-sdk-mvp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.1.2",
+    "happy-dom": "^20.14.5",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
+  }
+}
