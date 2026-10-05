@@ -1,60 +1,34 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
+import { Subject, type Subscription } from 'rxjs';
 import type { Chat, ChatModel, CreateChat } from './shared/contract';
 import { createClock, createIds, createTimers } from './shared/runtime';
 import { createSession, createTransport } from './shared/transport';
 import { createConnectionSlice } from './entities/connection/model';
 import { createMessagesSlice } from './entities/message/model';
-import type { ActionMap, ActionType, ChatState, Deps } from './features/deps';
-import { connectionChanged } from './features/connection-banner/changed';
-import { loadOlder } from './features/load-older/load-older';
-import { flushOutbox } from './features/outbox/flush';
-import { receiveMessage } from './features/receive/receive';
-import { retryMessage } from './features/send/retry';
-import { resendMessage } from './features/send/resend';
-import { sendMessage } from './features/send/send';
-
-// Реестр: команда → сценарий (deps, payload). Единственное место, где они собираются.
-const scenarios: { [T in ActionType]: (d: Deps, p: ActionMap[T]) => unknown } = {
-  'message/send': sendMessage,
-  'message/retry': retryMessage,
-  'message/resend': resendMessage,
-  'message/receive': receiveMessage,
-  'outbox/flush': flushOutbox,
-  'history/loadOlder': loadOlder,
-  'connection/changed': connectionChanged,
-};
+import type { ChatState, Deps } from './features/deps';
+import type { Action } from './features/of-type';
+import { connectionOf, transportEvents } from './features/sources';
+import { rootFeature } from './features/index';
 
 export const createChat: CreateChat = (backend): Chat => {
   const store = createStore<ChatState>()((set) => ({ ...createMessagesSlice(set), ...createConnectionSlice(set) }));
-  const timers = createTimers();
   const transport = createTransport(backend);
   const session = createSession();
+  const actions$ = new Subject<Action>(); // канал команд
+  const stop$ = new Subject<void>();
 
   const deps: Deps = {
-    store, transport, session, timers,
-    ids: createIds(),
-    clock: createClock(),
-    dispatch: (type, ...args) => run(type, ...args),
+    store, transport, session, timers: createTimers(), ids: createIds(), clock: createClock(),
+    // Единственное приведение: сигнатура Dispatch уже связывает type и payload, а Action — их объединение.
+    dispatch: (type, ...args) => actions$.next({ type, payload: args[0] } as Action),
   };
-  // Канал команд: ничего не возвращает; сценарий стартует сразу (до первого await), ошибка не роняет остальные.
-  function run<T extends ActionType>(type: T, ...args: unknown[]): void {
-    // Единственное приведение (как в ТЗ 5.4): тип payload восстановлен из реестра ActionMap.
-    const scenario = scenarios[type] as (d: Deps, p: unknown) => unknown;
-    const fail = (e: unknown) => console.error(`[${type}]`, e);
-    try {
-      Promise.resolve(scenario(deps, args[0])).catch(fail);
-    } catch (e) {
-      fail(e);
-    }
-  }
-
   const actions = {
     send: (text: string) => deps.dispatch('message/send', { text }),
     retry: (clientId: string) => deps.dispatch('message/retry', { clientId }),
     loadOlder: () => deps.dispatch('history/loadOlder'),
   };
-  let unsubscribe = () => {};
+  let subscription: Subscription | undefined;
 
   return {
     useChat(): ChatModel {
@@ -62,18 +36,16 @@ export const createChat: CreateChat = (backend): Chat => {
       return { messages, connection, showConnectionBanner, hasOlder, loadingOlder, ...actions };
     },
     start() {
-      unsubscribe = transport.on((e) =>
-        e.type === 'connection'
-          ? deps.dispatch('connection/changed', { state: e.state })
-          : deps.dispatch('message/receive', { message: e.message }),
-      );
-      transport.start();
+      const streams = { actions$, stop$, events$: transportEvents(transport), connection$: connectionOf(store) };
+      subscription = rootFeature(deps, streams).subscribe({ error: (e) => console.error('[feature]', e) });
+      transport.start(); // подписка уже есть: первое connected не потеряется
       deps.dispatch('history/loadOlder');
     },
     dispose() {
-      unsubscribe();
+      stop$.next();
+      stop$.complete();
+      subscription?.unsubscribe();
       session.stop();
-      timers.clearAll();
     },
   };
 };

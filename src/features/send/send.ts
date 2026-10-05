@@ -1,18 +1,15 @@
+import { ignoreElements, tap } from 'rxjs/operators';
 import type { Deps } from '../deps';
-import { resendMessage } from './resend';
+import { type Actions, ofType } from '../of-type';
 
-type SendDeps = Pick<Deps, 'store' | 'transport' | 'session' | 'timers' | 'ids' | 'clock'>;
-
-/** message/send: оптимистичное pending в стор, затем доставка (шаг процесса — прямой await). */
-export async function sendMessage(d: SendDeps, { text }: { text: string }): Promise<void> {
-  const clientId = d.ids.clientId();
-  d.store.getState().addPending({
-    id: clientId,
-    clientId,
-    text,
-    author: 'me',
-    createdAt: d.clock.now(),
-    status: 'pending',
-  });
-  await resendMessage(d, { clientId });
-}
+/** message/send: оптимистичное pending в стор (синхронно), затем команда доставки. */
+export const sendFeature = (d: Deps, actions$: Actions) =>
+  actions$.pipe(
+    ofType('message/send'),
+    tap(({ text }) => {
+      const clientId = d.ids.clientId();
+      d.store.getState().addPending({ id: clientId, clientId, text, author: 'me', createdAt: d.clock.now(), status: 'pending' });
+      d.dispatch('message/resend', { clientId });
+    }),
+    ignoreElements(),
+  );
