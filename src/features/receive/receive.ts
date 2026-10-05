@@ -1,7 +1,9 @@
-import type { Deps } from '../deps';
+import { Effect } from 'effect';
 import type { Message } from '../../shared/contract';
+import { StoreService } from '../services';
 
 /** message/receive: слияние входящего (чужое, эхо своего, дубликат) делает срез. */
-export function receiveMessage(d: Pick<Deps, 'store'>, { message }: { message: Message }): void {
-  d.store.getState().receive(message);
-}
+export const receiveMessage = ({ message }: { message: Message }) =>
+  Effect.gen(function* () {
+    (yield* StoreService).getState().receive(message);
+  });

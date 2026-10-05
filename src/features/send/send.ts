@@ -1,18 +1,14 @@
-import type { Deps } from '../deps';
+import { Effect } from 'effect';
+import { ClockService, IdsService, StoreService } from '../services';
 import { resendMessage } from './resend';
 
-type SendDeps = Pick<Deps, 'store' | 'transport' | 'session' | 'timers' | 'ids' | 'clock'>;
-
-/** message/send: оптимистичное pending в стор, затем доставка (шаг процесса — прямой await). */
-export async function sendMessage(d: SendDeps, { text }: { text: string }): Promise<void> {
-  const clientId = d.ids.clientId();
-  d.store.getState().addPending({
-    id: clientId,
-    clientId,
-    text,
-    author: 'me',
-    createdAt: d.clock.now(),
-    status: 'pending',
+/** message/send: оптимистичное pending в стор (синхронно), затем доставка — прямой yield*. */
+export const sendMessage = ({ text }: { text: string }) =>
+  Effect.gen(function* () {
+    const store = yield* StoreService;
+    const clientId = (yield* IdsService).clientId();
+    store.getState().addPending({
+      id: clientId, clientId, text, author: 'me', createdAt: (yield* ClockService).now(), status: 'pending',
+    });
+    yield* resendMessage({ clientId });
   });
-  await resendMessage(d, { clientId });
-}
