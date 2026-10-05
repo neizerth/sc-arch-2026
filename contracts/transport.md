@@ -81,7 +81,7 @@ export interface TransportEventMap {
   'thread.created':       { epoch: number; thread: Thread };
   'file.uploadProgress':  { epoch: number; uploadId: UploadId; loaded: number; total: number };
   'file.uploadConfirmed': { epoch: number; fileId: FileId; payload: UploadConfirmation };
-  'connection.changed':   { epoch: number; state: 'connected' | 'reconnecting' | 'disconnected' };
+  'connection.changed':   { epoch: number; state: 'connected' | 'reconnecting' };   // 'disconnected' — внутреннее состояние сокета, наружу не выходит
   'session.invalidated':  { epoch: number; reason: 'update_token_error' | 'token_error' | 'auth_required' };   // web: «перезапусти меня»
   'session.restarted':    { epoch: number };                                                                  // webview: хост уже перезапустил
 }
@@ -105,7 +105,7 @@ export class TransportError extends Error {
 ## 5. Epoch
 
 Номер поколения сессии: целое число, растёт при каждом `start` и `restart`, владелец — сессия.
-- Канал помечает им всё входящее: HTTP-запрос помнит поколение, в котором встал в очередь; каждый WS-сокет создаётся с текущим поколением; в webview epoch передаётся хосту и возвращается в уведомлениях.
+- Канал помечает им всё входящее: HTTP-запрос помнит поколение, в котором встал в очередь; каждый WS-сокет создаётся с текущим поколением; в webview epoch ведёт `BridgeProtocolAdapter`, хост его не видит: адаптер штампует им входящие уведомления и запоминает epoch каждого вызова по JSON-RPC `id`; ответ, пришедший после рестарта, отбрасывает сам.
 - Ответы и кадры старого поколения отбрасываются; вызов, начатый в старом поколении, отклоняется с `aborted_by_restart`.
 - Адаптеры переносят epoch из канала в события; `createTransport` отбрасывает события и отклоняет вызовы старого epoch. Сценарии проверяют epoch после каждого ожидания.
 - В стор epoch не попадает. Persist запрещён, номер живёт в памяти и начинается с нуля для каждого инстанса.
@@ -155,7 +155,9 @@ export class TransportError extends Error {
 - Методы: `transport.start`, `transport.restart`, `transport.loadThreads`, `transport.loadHistory`, `transport.sendMessage`, `transport.uploadFile`, `transport.cancelUpload`, `transport.capabilities`, `init.getOptions`.
 - Один `BridgeChannel` на инстанс общий для Transport и Platform: методы `platform.pickFiles`, `platform.openLink`, `platform.openFile`, `platform.capabilities` и уведомление `platform.event` (`app.resumed`, `app.paused`, `network.changed`).
 - Схемы контракта моста — `shared/contracts/bridge.schema.ts`, копия опубликованного контракта. Перевод операций, уведомлений и ошибок — таблица соответствия в `BridgeProtocolAdapter`. Consumer-driven набор (что SDK использует из контракта + сценарии на фикстурах) передаётся издателю.
-- События хоста: уведомление `{ jsonrpc: '2.0', method: 'transport.event', params: { type, epoch, data } }` с `type` из `TransportEventMap`.
+- События хоста: уведомление `{ jsonrpc: '2.0', method: 'transport.event', params: { type, data } }` с `type` из `TransportEventMap` (без `epoch`: его проставляет адаптер). Требование к мосту: уведомления и ответы приходят в порядке отправки; после `session.restarted` уведомлений прежней сессии нет.
+- `epoch` в вызовах моста не передаётся. `transport.restart` в webview — локальная смена epoch в адаптере; хосту уходит только вызов, если SDK просит его перезапуститься (`capabilities.requestRestart`).
+- `session.restarted` от хоста адаптер публикует с текущим epoch; новый epoch появляется после `begin('restart')` в сессии.
 - Ошибки: коды JSON-RPC, в `error.data.code` — значение из `TransportErrorCode`.
 - Таймаут на каждый запрос задаёт SDK; нет ответа — `timeout`.
 - Нет ответа на `transport.capabilities` — минимальный набор возможностей.
@@ -178,4 +180,5 @@ export class TransportError extends Error {
 - Как файл попадает к хосту в webview: ссылка на выбранный файл или байты через мост (FINDINGS, вопрос 14).
 - Может ли SDK просить хост о рестарте — `capabilities.requestRestart` (вопрос 15).
 - Состав `Message`, `Thread`, вложений и статусов — по ответам бэкенда (вопросы 5, 9, 12).
+- Гарантирует ли мост порядок уведомлений и ответов (требование разд. 7). Без него вариант «epoch ведёт адаптер» не работает.
 - Текущая версия согласованного контракта моста и его формат (FINDINGS, вопрос 44); издатель — мобильная поверхность.
