@@ -1,7 +1,10 @@
-import type { Deps } from '../deps';
+import { sample } from 'effector';
+import type { Domain } from 'effector';
 import type { Message } from '../../shared/contract';
+import type { Deps } from '../deps';
+import type { Events } from '../events';
 
-/** message/receive: слияние входящего (чужое, эхо своего, дубликат) делает срез. */
-export function receiveMessage(d: Pick<Deps, 'store'>, { message }: { message: Message }): void {
-  d.store.getState().receive(message);
+export function setupReceive(d: Deps, ev: Events, domain: Domain): void {
+  const receiveFx = domain.createEffect((message: Message) => d.store.getState().receive(message));
+  sample({ clock: ev['message/receive'], fn: ({ message }) => message, target: receiveFx });
 }
